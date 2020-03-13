@@ -1,0 +1,17 @@
+#!/bin/env bash
+
+if [[ ! -L FIP ]]; then
+  if [[ ! -d ../../../../../repo_share/FIP ]]; then
+    git clone https://github.com/sensor-dream/FIP.git
+  else
+    ln -s ../../../../../repo_share/FIP
+  fi
+fi
+
+[[ -L '.vscode' ]] || ln -s 'FIP/.vscode'
+[[ -L hidden ]] || ln -s FIP/hidden hidden
+[[ -L tools ]] || ln -s FIP/tools tools
+[[ -L push ]] || ln -s FIP/tools/.push push
+[[ -L pushcah ]] || ln -s FIP/tools/.push-clear-all-history pushcah
+[[ -L pushma ]] || ln -s FIP/tools/.push-merge-all pushma
+[[ -L main.cfg ]] || ln -s FIP/main.cfg

@@ -1,0 +1,167 @@
+#!/bin/env bash
+# -*- coding: utf-8 -*-
+#
+## @Author: sensor-dream
+## @Email: sensor-dream@sensor-dream.ru
+## @Copyright © sensor-dream. All rights reserved. Contacts: sensor-dream@sensor-dream.ru
+## @Copyright © sensor-dream. All rights reserved. Contacts: sensor-dream@sensor-dream.ru
+## @Copyright © Sensor-Dream Boxed System (SDBS). Contacts: sensor-dream@sensor-dream.ru
+## @License: http://www.apache.org/licenses/LICENSE-2.0
+## @Site: https://sensor-dream.ru
+## @File: install
+## @Creation date file: 19.10.2020, 13:09:39
+
+[[ -z "${install_script_source}" ]] && declare -rx install_script_source="$BASH_SOURCE"
+
+if [[ ! -L FIP ]]; then
+  [[ -f PREINSTALL ]] || echo "Not file PREINSTALL" && exit
+  [[ $(stat -c "%a" PREINSTALL) -eq 0775 ]] || chmod +x PREINSTALL
+  ./PREINSTAL
+fi
+
+if [[ -z "${install_script_source_path}" ]]; then
+  temp_one="$(dirname ${install_script_source})"
+  if [[ "${temp_one}" == '.' ]]; then
+    declare -rx install_script_source_path="$(pwd)"
+  else
+    declare -rx install_script_source_path="${temp_one}"
+  fi
+fi
+
+if [[ -z "${main_run_script_path}" ]]; then
+  declare -rx main_run_script_path="$(pwd)"
+  printf "Script runs from path: %s\n" "${main_run_script_path}"
+fi
+
+if [[ -z "${main_cfg_script_source}" ]]; then
+  check=1
+  while [[ "${check}" -eq 1 ]]; do
+    if [[ ! -f 'main.cfg' ]]; then
+      if [[ "$(pwd)" != "/" ]]; then
+        cd ../
+      else
+        cd ${main_run_script_path}
+        check=0
+        echo -e '\e[31m'"!!! Not found configuration shared file !!!\033[0m"
+        tput sgr0
+        exit 1
+      fi
+    else
+      check=0
+      declare -rx main_project_path="$(pwd)"
+      . "${main_project_path}/main.cfg" "$@"
+      cd "${main_run_script_path}"
+    fi
+  done
+fi
+
+printf "Loading: %s\n" "$(readlink -m ${BASH_SOURCE})"
+
+function install_install() {
+
+  local install_pkg=(
+    'composer'
+    'npm'
+    'nodejs'
+  )
+
+  pm "$@" -- "${install_pkg[@]}"
+
+  [[ -n "${cfg_full_name}" ]] || . "${main_project_path}/hidden/cfg-personal-information"
+  [[ -n "${cfg_storage_name}" ]] || . "${main_project_path}/hidden/cfg-storage-information"
+  [[ -n "${cfg_db_mysql_base_path}" ]] || . "${main_project_path}/hidden/cfg-mysql-information"
+  [[ -n "${cfg_backpack_license_key}" ]] || local cfg_backpack_license_key="$(cat ${main_project_path}/hidden/backpack-license.key)"
+
+  [[ "$(sudo systemctl is-active mariadb)" ]] || ./"FIP/application/installation/rpm/"
+
+  local domain_name="${cfg_docfg}"
+
+  # for domain root www directory path_mppc= in use
+  local path_mppc='mppc'
+
+  local domain=($(echo ${domain_name//./ } | tac -s ' '))
+  local domain_path="${cfg_storage_path}/${cfg_development_path_name}/${cfg_www_public_path_name}/${domain[0]}/${domain[1]}"
+
+  local root_domain_name="${domain[1]}.${domain[0]}"
+  unset domain[0]
+  unset domain[1]
+
+  if [[ ${#domain[@]} -eq 0 ]]; then
+    domain_path="${domain_path}/root"
+  else
+    domain_path="${domain_path}/$(echo $(echo ${domain[@]} | tac -s ' ') | tr -s ' ' '.')"
+  fi
+
+  if [[ ! -d "${domain_path}" ]]; then
+    sudo mkdir -p -v -m 0775 "${domain_path}/www"
+    sudo mkdir -v -m 0775 "${domain_path}/cgi-bin"
+    sudo mkdir -p -v -m 0775 "${domain_path}/logs/nginx"
+    sudo mkdir -v -m 0775 "${domain_path}/tmp"
+    echo "Set permission for user - ${domain_path} and group - apache in ${domain_path} directory"
+    sudo chown ${session_user}.apache "${domain_path}" -R
+  else
+    echo "WWW public path: ${domain_path}/www is good use"
+  fi
+
+  # echo "${domain_path}"
+  # exit
+
+  if [[ -f "${domain_path}/www/${path_mppc}/composer.json" ]]; then
+    cd "${domain_path}/www/${path_mppc}"
+    echo "Update BackPack ? (N/y)"
+    read key
+    [[ -z "${key}" ]] || php -d memory_limit=-1 /usr/bin/composer update
+  else
+    php -d memory_limit=-1 /usr/bin/composer global require laravel/installer
+    php -d memory_limit=-1 /usr/bin/composer create-project --prefer-dist laravel/laravel "${domain_path}/www/${path_mppc}"
+    cd "${domain_path}/www/${path_mppc}"
+    php -d memory_limit=-1 /usr/bin/composer require backpack/crud --no-cache
+    php -d memory_limit=-1 /usr/bin/composer require backpack/generators --dev --no-cache
+    php -d memory_limit=-1 /usr/bin/composer require laracasts/generators --dev --no-cache
+
+    [[ -f '.env' ]] || cp '.env.example' '.env'
+
+    php -d memory_limit=-1 /usr/bin/composer require eduardoarandah/usermanager
+
+    [[ -f "${domain_path}/www/${path_mppc}" ]] || ln -s "${domain_path}/www/application/installation/backpack/pagemanager/PageTemplates.php" "${domain_path}/www/${path_mppc}/app/PageTemplates.php"
+    php -d memory_limit=-1 /usr/bin/composer require backpack/pagemanager
+
+    sed -i -e 's%^APP_NAME.*%APP_NAME="'"${cfg_org}"'"%; s%^APP_URL.*%APP_URL=https://'"${domain_name}"'%; s%^DB_DATABASE.*%DB_DATABASE='"${domain_name}"'%; s%^DB_USERNAME.*%DB_USERNAME='"${domain_name}"'%; s%^DB_PASSWORD.*%DB_PASSWORD='"${domain_name}"'%; s%^MAIL_HOST.*%MAIL_HOST=smtp.yandex.ru%; s%^MAIL_PORT.*%MAIL_PORT=465%; s%^MAIL_ENCRYPTION.*%MAIL_ENCRYPTION=SSL%; s%^MAIL_USERNAME.*%MAIL_USERNAME='"${cfg_email}"'%; s%^MAIL_PASSWORD.*%MAIL_PASSWORD='"${cfg_email_password}"'%; s%^MAIL_FROM_ADDRESS.*%MAIL_FROM_ADDRESS='"${cfg_org}@${root_domain_name}"'%' '.env'
+
+    if grep -q "BACKPACK_LICENSE" '.env'; then
+      sed -i -e 's%^BACKPACK_LICENSE.*%BACKPACK_LICENSE='"${cfg_backpack_license_key}"'%' '.env'
+    else
+      sed -i -e '/APP_NAME="'"${cfg_org}"'/s/$/\nBACKPACK_LICENSE='"${cfg_backpack_license_key}"'/' '.env'
+    fi
+
+    [[ -d app/Http/Controllers/Auth ]] && rm -rf app/Http/Controllers/Auth
+    php -d memory_limit=-1 artisan backpack:install
+
+    echo "Fix error message: Class '\App\User' not found in Laravel when changing the namespace"
+
+    sed -i '/user_model_fqn/s/=>.*$/=> App\\Models\\User::class,/' "${domain_path}/www/${path_mppc}/config/backpack/base.php"
+
+    [[ -f "${domain_path}/www/${path_mppc}/artisan" ]] && php artisan backpack:user
+
+  fi
+
+  sudo chown ${session_user}.apache "${domain_path}/www/${path_mppc}" -R
+  rm "${domain_path}/www/${path_mppc}/bootstrap/cache/"*.*
+  rm -r "${domain_path}/www/${path_mppc}/storage/framework/cache/data/"*
+  rm "${domain_path}/www/${path_mppc}/storage/framework/sessions/"*
+  rm "${domain_path}/www/${path_mppc}/storage/framework/views/"*
+  rm "${domain_path}/www/${path_mppc}/storage/logs/"*.*
+
+  cd "${main_project_path}"
+
+}
+
+function main_install_script_source() {
+
+  # printf "Initialise main function of install script source\n";
+
+  install_install "$@"
+
+}
+
+main_install_script_source "$@"
